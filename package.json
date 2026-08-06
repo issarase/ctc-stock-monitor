@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@sparticuz/chromium": "^149.0.0",
-    "@supabase/supabase-js": "^2.112.1",
+    "@supabase/supabase-js": "^2.112.2",
     "axios": "^1.19.0",
     "axios-cookiejar-support": "^7.0.0",
     "cheerio": "^1.2.0",
@@ -20,7 +20,8 @@
     "playwright-core": "^1.62.1",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "tough-cookie": "^6.0.2"
+    "tough-cookie": "^6.0.2",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

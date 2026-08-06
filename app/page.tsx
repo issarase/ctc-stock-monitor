@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import ExcelUploader from './components/ExcelUploader';
 import { 
   Package, 
   Trash2, 
@@ -22,7 +23,8 @@ import {
   SlidersHorizontal,
   Minus,
   Check,
-  ArrowUpDown
+  ArrowUpDown,
+  FileSpreadsheet
 } from 'lucide-react';
 
 export default function StockDashboard() {
@@ -32,6 +34,9 @@ export default function StockDashboard() {
   const [loginUserInput, setLoginUserInput] = useState('');
   const [loginPassInput, setLoginPassInput] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+
+  // Tab State: 'customers' หรือ 'excel'
+  const [activeTab, setActiveTab] = useState<'customers' | 'excel'>('excel');
 
   // Dashboard State
   const [customers, setCustomers] = useState<any[]>([]);
@@ -97,7 +102,7 @@ export default function StockDashboard() {
       const data = await res.json();
 
       if (data.success) {
-        setResultModalOpen(false); // ปิด Pop-up ค้างถ้ามี
+        setResultModalOpen(false);
         localStorage.setItem('ctc_user', loginUserInput.trim());
         localStorage.setItem('ctc_pass', loginPassInput.trim());
         setCurrentUser(loginUserInput.trim());
@@ -178,8 +183,11 @@ export default function StockDashboard() {
     const username = currentUser || localStorage.getItem('ctc_user') || 'issarase.l';
     setSyncingCustomer(prev => ({ ...prev, [custName]: true }));
 
+    const isExcel = custName.includes('project_') || custName.includes('โครงการ') || custName.endsWith('.xlsx');
+    const targetEndpoint = isExcel ? '/api/resync-excel' : '/api/resync-customer';
+
     try {
-      const res = await fetch('/api/resync-customer', {
+      const res = await fetch(targetEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -190,7 +198,7 @@ export default function StockDashboard() {
 
       const data = await res.json();
       if (data.success) {
-        const count = data.totalItemsFound ?? data.count ?? data.updatedCount ?? 0;
+        const count = data.count ?? data.totalItemsFound ?? data.updatedCount ?? 0;
         showResultModal('อัปเดตสต็อกสดเรียบร้อย!', `พบ ${count} รายการสำหรับ ${custName}`);
         fetchDashboardData(username);
       } else {
@@ -204,27 +212,34 @@ export default function StockDashboard() {
   };
 
   const handleResyncAll = async () => {
-    if (customers.length === 0) return showResultModal('แจ้งเตือน', 'ไม่มีรายการลูกค้าในระบบของคุณ', false);
+    if (customers.length === 0) return showResultModal('แจ้งเตือน', 'ไม่มีรายการในระบบของคุณ', false);
     if (!currentUser) return;
 
     setSyncingAll(true);
 
     try {
-      const fetchPromises = customers.map(cust => 
-        fetch('/api/resync-customer', {
+      const fetchPromises = customers.map(cust => {
+        const isExcel = cust.customerName.includes('project_') || cust.customerName.includes('โครงการ') || cust.customerName.endsWith('.xlsx');
+        const targetEndpoint = isExcel ? '/api/resync-excel' : '/api/resync-customer';
+
+        return fetch(targetEndpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             username: currentUser,
             customerName: cust.customerName,
           })
-        }).then(res => res.json()).catch(() => ({ success: false }))
-      );
+        }).then(res => res.json()).catch(() => ({ success: false }));
+      });
 
       const results = await Promise.all(fetchPromises);
       const successCount = results.filter(r => r.success).length;
 
-      showResultModal('ดึงสต็อกสดเรียบร้อยแล้ว!', `อัปเดตข้อมูลเสร็จสิ้น (${successCount}/${customers.length} ไซท์)`);
+      showResultModal(
+        'ดึงสต็อกสดเรียบร้อยแล้ว!', 
+        `อัปเดตข้อมูลเสร็จสิ้น ทั้งหมด ${successCount}/${customers.length} รายการ (ลูกค้า ${regularCustomers.length} ไซท์ / โครงการ Excel ${excelProjectCustomers.length} โครงการ)`
+      );
+      
       fetchDashboardData(currentUser);
     } catch (err: any) {
       showResultModal('เกิดข้อผิดพลาด', err.message, false);
@@ -286,7 +301,7 @@ export default function StockDashboard() {
       if (data.success && currentUser) {
         setDeleteModalOpen(false);
         fetchDashboardData(currentUser);
-        showResultModal('ลบสำเร็จ', `ลบลูกค้า "${customerToDelete}" ออกจากรายการดูแลเรียบร้อยแล้ว`);
+        showResultModal('ลบสำเร็จ', `ลบรายการ "${customerToDelete}" ออกจากระบบเรียบร้อยแล้ว`);
       } else {
         showResultModal('เกิดข้อผิดพลาด', data.error || 'ไม่สามารถลบข้อมูลได้', false);
       }
@@ -319,14 +334,14 @@ export default function StockDashboard() {
           title={`ต่ำกว่าเกณฑ์ความปลอดภัย (${minStock} ชิ้น) คลิกเพื่อปรับตั้งค่า`}
           className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 transition-all active:scale-95 cursor-pointer shadow-2xs"
         >
-          <AlertTriangle className="w-3.5 h-3.5" /> เหลือ {qty} ชิ้น
+          <AlertTriangle className="w-3.5 h-3.5" /> เหลือ {qty} ชิ้น (เกณฑ์ {minStock})
         </button>
       );
     } else {
       return (
         <button
           onClick={() => openThresholdModal(item)}
-          title="ของหมด (คลิกเพื่อปรับตั้งค่า)"
+          title={`ของหมด - เกณฑ์ที่ต้องการ ${minStock} ชิ้น (คลิกเพื่อปรับตั้งค่า)`}
           className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 transition-all active:scale-95 cursor-pointer shadow-2xs"
         >
           <XCircle className="w-3.5 h-3.5" /> ของหมด (0)
@@ -335,32 +350,192 @@ export default function StockDashboard() {
     }
   };
 
-  const processedCustomers = customers
-    .filter(cust => {
-      const term = searchTerm.toLowerCase();
-      const matchCustomer = cust.customerName?.toLowerCase().includes(term);
-      const matchOpp = cust.oppNumbers?.some((opp: string) => opp.toLowerCase().includes(term));
-      const matchItem = cust.items?.some((item: any) => 
-        item.item_name?.toLowerCase().includes(term) || 
-        item.stock_code?.toLowerCase().includes(term) ||
-        (item.remark && item.remark.toLowerCase().includes(term))
-      );
-      return matchCustomer || matchOpp || matchItem;
-    })
-    .sort((a, b) => {
-      if (sortBy === 'name_asc') {
-        return a.customerName.localeCompare(b.customerName, 'th');
-      } else if (sortBy === 'name_desc') {
-        return b.customerName.localeCompare(a.customerName, 'th');
-      } else if (sortBy === 'items_desc') {
-        return (b.items?.length || 0) - (a.items?.length || 0);
-      } else if (sortBy === 'items_asc') {
-        return (a.items?.length || 0) - (b.items?.length || 0);
-      }
-      return 0;
-    });
+  const filteredCustomers = customers.filter(cust => {
+    const term = searchTerm.toLowerCase();
+    const matchCustomer = cust.customerName?.toLowerCase().includes(term);
+    const matchOpp = cust.oppNumbers?.some((opp: string) => opp.toLowerCase().includes(term));
+    const matchItem = cust.items?.some((item: any) => 
+      item.item_name?.toLowerCase().includes(term) || 
+      item.stock_code?.toLowerCase().includes(term) ||
+      (item.remark && item.remark.toLowerCase().includes(term))
+    );
+    return matchCustomer || matchOpp || matchItem;
+  });
 
-  // 🔒 ถ้ายังไม่ได้ล็อกอิน ให้โชว์หน้า Login
+  // 📍 ปรับการกรองให้ตรวจจับ 'โครงการ' ทุกรูปแบบไม่ว่าชื่อไฟล์จะเป็นอะไร
+  const excelProjectCustomers = filteredCustomers.filter(cust => 
+    cust.customerName.includes('project_') || 
+    cust.customerName.includes('โครงการ') || 
+    cust.customerName.endsWith('.xlsx')
+  );
+
+  const regularCustomers = filteredCustomers.filter(cust => 
+    !cust.customerName.includes('project_') && 
+    !cust.customerName.includes('โครงการ') && 
+    !cust.customerName.endsWith('.xlsx')
+  );
+
+  const sortFn = (a: any, b: any) => {
+    if (sortBy === 'name_asc') return a.customerName.localeCompare(b.customerName, 'th');
+    if (sortBy === 'name_desc') return b.customerName.localeCompare(a.customerName, 'th');
+    if (sortBy === 'items_desc') return (b.items?.length || 0) - (a.items?.length || 0);
+    if (sortBy === 'items_asc') return (a.items?.length || 0) - (b.items?.length || 0);
+    return 0;
+  };
+
+  excelProjectCustomers.sort(sortFn);
+  regularCustomers.sort(sortFn);
+
+  const renderCard = (cust: any) => {
+    const isExpanded = expandedCustomers[cust.customerName] || false;
+    const topItems = cust.items.slice(0, 3);
+    const extraItems = cust.items.slice(3);
+    const hasMore = extraItems.length > 0;
+    const isSingleSyncing = syncingCustomer[cust.customerName] || false;
+
+    return (
+      <div key={cust.customerName} className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden transition-all mb-6">
+        <div className="bg-slate-50/80 border-b border-slate-100 px-6 py-4 flex justify-between items-center">
+          <div className="flex items-center space-x-3">
+            <div className="bg-blue-100 p-2 rounded-lg text-blue-700">
+              <Building2 className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-base font-bold text-slate-800">{cust.customerName}</h2>
+                <span className="text-xs text-slate-400 font-medium bg-slate-200/60 px-2 py-0.5 rounded-full">
+                  รวม {cust.items.length} รายการ
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                <span className="text-[11px] text-slate-400">ผูกกับ OPP:</span>
+                {cust.oppNumbers?.map((opp: string) => (
+                  <span key={opp} className="bg-slate-200/80 text-slate-700 font-mono text-[11px] px-2 py-0.5 rounded font-medium">
+                    {opp}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center space-x-1">
+            <button 
+              onClick={() => handleResyncCustomer(cust.customerName)}
+              disabled={isSingleSyncing}
+              className="p-2 text-slate-400 hover:text-blue-600 rounded-lg hover:bg-white transition-colors cursor-pointer"
+              title="ดึงสต็อกสดเฉพาะลูกค้ารายนี้"
+            >
+              <RotateCw className={`w-4 h-4 ${isSingleSyncing ? 'animate-spin text-blue-600' : ''}`} />
+            </button>
+
+            <button 
+              onClick={() => handleDeleteCustomer(cust.customerName)}
+              className="p-2 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-white transition-colors cursor-pointer"
+              title="ลบลูกค้านี้ออกจากการดูแลของคุณ"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wider text-slate-400 font-semibold bg-slate-50/30">
+                <th className="py-3 px-6">รายการสินค้า / อะไหล่</th>
+                <th className="py-3 px-4">เลข OPP</th>
+                <th className="py-3 px-4">STOCK CODE</th>
+                <th className="py-3 px-4">LOCATION</th>
+                <th className="py-3 px-4 text-center">สถานะคงเหลือ (คลิกเพื่อปรับเกณฑ์)</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 text-sm">
+              {topItems.map((item: any) => (
+                <tr key={item.id} className="hover:bg-slate-50/50 transition-colors">
+                  <td className="py-4 px-6 max-w-xs sm:max-w-md">
+                    <div className="font-medium text-slate-900 leading-snug">{item.item_name}</div>
+                    {item.remark && (
+                      <div className="text-xs text-slate-400 mt-1 flex items-center gap-1 max-w-sm truncate">
+                        <Tag className="w-3 h-3 flex-shrink-0 text-slate-300" />
+                        <span className="truncate">{item.remark}</span>
+                      </div>
+                    )}
+                  </td>
+                  <td className="py-4 px-4 font-mono text-xs font-semibold text-blue-600">
+                    {item.opp_number || 'N/A'}
+                  </td>
+                  <td className="py-4 px-4 font-mono text-xs text-slate-600">
+                    {item.stock_code}
+                  </td>
+                  <td className="py-4 px-4">
+                    <div className="inline-flex items-center gap-1 text-xs text-slate-600 bg-slate-100 px-2.5 py-1 rounded-md">
+                      <MapPin className="w-3 h-3 text-slate-400" />
+                      {item.location || '-'}
+                    </div>
+                  </td>
+                  <td className="py-4 px-4 text-center">
+                    {getStatusBadge(item)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          {hasMore && (
+            <div className={`grid transition-all duration-300 ease-in-out ${isExpanded ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
+              <div className="overflow-hidden">
+                <table className="w-full text-left border-collapse">
+                  <tbody className="divide-y divide-slate-100 text-sm border-t border-slate-100">
+                    {extraItems.map((item: any) => (
+                      <tr key={item.id} className="hover:bg-slate-50/50 transition-colors">
+                        <td className="py-4 px-6 max-w-xs sm:max-w-md">
+                          <div className="font-medium text-slate-900 leading-snug">{item.item_name}</div>
+                          {item.remark && (
+                            <div className="text-xs text-slate-400 mt-1 flex items-center gap-1 max-w-sm truncate">
+                              <Tag className="w-3 h-3 flex-shrink-0 text-slate-300" />
+                              <span className="truncate">{item.remark}</span>
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-4 px-4 font-mono text-xs font-semibold text-blue-600">
+                          {item.opp_number || 'N/A'}
+                        </td>
+                        <td className="py-4 px-4 font-mono text-xs text-slate-600">
+                          {item.stock_code}
+                        </td>
+                        <td className="py-4 px-4">
+                          <div className="inline-flex items-center gap-1 text-xs text-slate-600 bg-slate-100 px-2.5 py-1 rounded-md">
+                            <MapPin className="w-3 h-3 text-slate-400" />
+                            {item.location || '-'}
+                          </div>
+                        </td>
+                        <td className="py-4 px-4 text-center">
+                          {getStatusBadge(item)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {hasMore && (
+          <div className="bg-slate-50/50 border-t border-slate-100 px-6 py-2.5 text-center">
+            <button 
+              onClick={() => toggleExpand(cust.customerName)}
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-700 transition-colors py-1 px-3 rounded-lg hover:bg-blue-50 cursor-pointer"
+            >
+              <span>{isExpanded ? 'ย่อเก็บรายการ' : `แสดงเพิ่มเติม (อีก ${extraItems.length} รายการ)`}</span>
+              {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   if (!currentUser) {
     return (
       <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4 font-sans relative">
@@ -403,7 +578,7 @@ export default function StockDashboard() {
             <button 
               type="submit"
               disabled={isLoggingIn}
-              className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-semibold flex items-center justify-center gap-2 shadow-md shadow-blue-200 transition-all active:scale-98 disabled:opacity-50"
+              className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-semibold flex items-center justify-center gap-2 shadow-md shadow-blue-200 transition-all active:scale-98 disabled:opacity-50 cursor-pointer"
             >
               {isLoggingIn && <Loader2 className="w-4 h-4 animate-spin" />}
               <span>{isLoggingIn ? 'กำลังเข้าสู่ระบบ...' : 'เข้าสู่ระบบ'}</span>
@@ -411,7 +586,6 @@ export default function StockDashboard() {
           </form>
         </div>
 
-        {/* 🎨 Alert Pop-up สำหรับหน้า Login */}
         {resultModalOpen && (
           <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 duration-200 text-center">
@@ -430,7 +604,7 @@ export default function StockDashboard() {
 
               <button
                 onClick={() => setResultModalOpen(false)}
-                className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold transition-all active:scale-95 shadow-sm"
+                className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold transition-all active:scale-95 shadow-sm cursor-pointer"
               >
                 ตกลง
               </button>
@@ -441,7 +615,6 @@ export default function StockDashboard() {
     );
   }
 
-  // 🔓 ถ้าล็อกอินแล้ว โชว์หน้า Dashboard
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 font-sans">
       <header className="bg-white border-b border-slate-200 sticky top-0 z-10 shadow-sm">
@@ -464,7 +637,7 @@ export default function StockDashboard() {
 
             <button 
               onClick={handleLogout}
-              className="p-2 text-slate-400 hover:text-rose-600 rounded-xl hover:bg-slate-100 transition-colors"
+              className="p-2 text-slate-400 hover:text-rose-600 rounded-xl hover:bg-slate-100 transition-colors cursor-pointer"
               title="ออกจากระบบ"
             >
               <LogOut className="w-4 h-4" />
@@ -474,23 +647,58 @@ export default function StockDashboard() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        
+        {/* Tab Navigation สลับหน้าระหว่าง รายการลูกค้า กับ โครงการ Excel */}
+        <div className="flex border-b border-slate-200 mb-6 bg-white rounded-2xl p-1.5 shadow-sm border">
+          <button
+            onClick={() => setActiveTab('customers')}
+            className={`flex-1 py-3 px-4 rounded-xl text-sm font-bold flex items-center justify-center gap-2 transition-all cursor-pointer ${
+              activeTab === 'customers'
+                ? 'bg-blue-600 text-white shadow-md shadow-blue-200'
+                : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'
+            }`}
+          >
+            <Building2 className="w-4 h-4" />
+            <span>🏢 รายการลูกค้าที่อยู่ในความดูแล ({regularCustomers.length})</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('excel')}
+            className={`flex-1 py-3 px-4 rounded-xl text-sm font-bold flex items-center justify-center gap-2 transition-all cursor-pointer ${
+              activeTab === 'excel'
+                ? 'bg-blue-600 text-white shadow-md shadow-blue-200'
+                : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'
+            }`}
+          >
+            <FileSpreadsheet className="w-4 h-4" />
+            <span>📊 โครงการจากไฟล์ Excel ({excelProjectCustomers.length})</span>
+          </button>
+        </div>
+
+        {/* Top Control Bar */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
           <div className="flex items-center space-x-3 w-full sm:w-auto">
-            <button 
-              onClick={() => setIsModalOpen(true)}
-              className="flex items-center justify-center space-x-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-xl font-medium text-sm transition-all shadow-sm shadow-blue-200 active:scale-95"
-            >
-              <Plus className="w-4 h-4" />
-              <span>เพิ่ม OPP / ลูกค้าใหม่</span>
-            </button>
+            {activeTab === 'customers' ? (
+              <button 
+                onClick={() => setIsModalOpen(true)}
+                className="flex items-center justify-center space-x-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-xl font-medium text-sm transition-all shadow-sm shadow-blue-200 active:scale-95 cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>เพิ่ม OPP / ลูกค้าใหม่</span>
+              </button>
+            ) : (
+              <ExcelUploader onSuccess={() => {
+                if (currentUser) fetchDashboardData(currentUser);
+              }} />
+            )}
             
             <button 
               onClick={handleResyncAll}
               disabled={syncingAll}
-              className="flex items-center justify-center space-x-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 px-4 py-2.5 rounded-xl font-medium text-sm transition-all shadow-sm active:scale-95 disabled:opacity-50"
+              className="flex items-center justify-center space-x-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 px-4 py-2.5 rounded-xl font-medium text-sm transition-all shadow-sm active:scale-95 disabled:opacity-50 cursor-pointer"
             >
               <RotateCw className={`w-4 h-4 text-blue-600 ${syncingAll ? 'animate-spin' : ''}`} />
-              <span>{syncingAll ? 'กำลังดึงสต็อกสดทุกไซท์...' : 'ดึงสต็อกสดทั้งหมด'}</span>
+              <span>{syncingAll ? 'กำลังดึงสต็อกสด...' : 'ดึงสต็อกสดทั้งหมด'}</span>
             </button>
           </div>
 
@@ -524,167 +732,32 @@ export default function StockDashboard() {
           </div>
         </div>
 
-        <div className="space-y-6">
-          {processedCustomers.length === 0 ? (
-            <div className="text-center py-16 bg-white rounded-2xl border border-slate-200/80 text-slate-400">
-              <Building2 className="w-12 h-12 mx-auto text-slate-300 mb-3" />
-              <p className="text-sm font-medium text-slate-600">ไม่พบรายการลูกค้าของคุณ ({currentUser})</p>
-              <p className="text-xs text-slate-400 mt-1">กดปุ่ม "เพิ่ม OPP / ลูกค้าใหม่" ด้านบนเพื่อเริ่มติดตามสต็อก</p>
-            </div>
-          ) : (
-            processedCustomers.map((cust) => {
-              const isExpanded = expandedCustomers[cust.customerName] || false;
-              const topItems = cust.items.slice(0, 3);
-              const extraItems = cust.items.slice(3);
-              const hasMore = extraItems.length > 0;
-              const isSingleSyncing = syncingCustomer[cust.customerName] || false;
-
-              return (
-                <div key={cust.customerName} className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden transition-all">
-                  
-                  <div className="bg-slate-50/80 border-b border-slate-100 px-6 py-4 flex justify-between items-center">
-                    <div className="flex items-center space-x-3">
-                      <div className="bg-blue-100 p-2 rounded-lg text-blue-700">
-                        <Building2 className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <h2 className="text-base font-bold text-slate-800">{cust.customerName}</h2>
-                          <span className="text-xs text-slate-400 font-medium bg-slate-200/60 px-2 py-0.5 rounded-full">
-                            รวม {cust.items.length} รายการ
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                          <span className="text-[11px] text-slate-400">ผูกกับ OPP:</span>
-                          {cust.oppNumbers?.map((opp: string) => (
-                            <span key={opp} className="bg-slate-200/80 text-slate-700 font-mono text-[11px] px-2 py-0.5 rounded font-medium">
-                              {opp}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center space-x-1">
-                      <button 
-                        onClick={() => handleResyncCustomer(cust.customerName)}
-                        disabled={isSingleSyncing}
-                        className="p-2 text-slate-400 hover:text-blue-600 rounded-lg hover:bg-white transition-colors"
-                        title="ดึงสต็อกสดเฉพาะลูกค้ารายนี้"
-                      >
-                        <RotateCw className={`w-4 h-4 ${isSingleSyncing ? 'animate-spin text-blue-600' : ''}`} />
-                      </button>
-
-                      <button 
-                        onClick={() => handleDeleteCustomer(cust.customerName)}
-                        className="p-2 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-white transition-colors"
-                        title="ลบลูกค้านี้ออกจากการดูแลของคุณ"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse">
-                      <thead>
-                        <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wider text-slate-400 font-semibold bg-slate-50/30">
-                          <th className="py-3 px-6">รายการสินค้า / อะไหล่</th>
-                          <th className="py-3 px-4">เลข OPP</th>
-                          <th className="py-3 px-4">STOCK CODE</th>
-                          <th className="py-3 px-4">LOCATION</th>
-                          <th className="py-3 px-4 text-center">สถานะคงเหลือ (คลิกเพื่อปรับเกณฑ์)</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 text-sm">
-                        {topItems.map((item: any) => (
-                          <tr key={item.id} className="hover:bg-slate-50/50 transition-colors">
-                            <td className="py-4 px-6 max-w-xs sm:max-w-md">
-                              <div className="font-medium text-slate-900 leading-snug">{item.item_name}</div>
-                              {item.remark && (
-                                <div className="text-xs text-slate-400 mt-1 flex items-center gap-1 max-w-sm truncate">
-                                  <Tag className="w-3 h-3 flex-shrink-0 text-slate-300" />
-                                  <span className="truncate">{item.remark}</span>
-                                </div>
-                              )}
-                            </td>
-                            <td className="py-4 px-4 font-mono text-xs font-semibold text-blue-600">
-                              {item.opp_number || 'N/A'}
-                            </td>
-                            <td className="py-4 px-4 font-mono text-xs text-slate-600">
-                              {item.stock_code}
-                            </td>
-                            <td className="py-4 px-4">
-                              <div className="inline-flex items-center gap-1 text-xs text-slate-600 bg-slate-100 px-2.5 py-1 rounded-md">
-                                <MapPin className="w-3 h-3 text-slate-400" />
-                                {item.location || '-'}
-                              </div>
-                            </td>
-                            <td className="py-4 px-4 text-center">
-                              {getStatusBadge(item)}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-
-                    {hasMore && (
-                      <div className={`grid transition-all duration-300 ease-in-out ${isExpanded ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
-                        <div className="overflow-hidden">
-                          <table className="w-full text-left border-collapse">
-                            <tbody className="divide-y divide-slate-100 text-sm border-t border-slate-100">
-                              {extraItems.map((item: any) => (
-                                <tr key={item.id} className="hover:bg-slate-50/50 transition-colors">
-                                  <td className="py-4 px-6 max-w-xs sm:max-w-md">
-                                    <div className="font-medium text-slate-900 leading-snug">{item.item_name}</div>
-                                    {item.remark && (
-                                      <div className="text-xs text-slate-400 mt-1 flex items-center gap-1 max-w-sm truncate">
-                                        <Tag className="w-3 h-3 flex-shrink-0 text-slate-300" />
-                                        <span className="truncate">{item.remark}</span>
-                                      </div>
-                                    )}
-                                  </td>
-                                  <td className="py-4 px-4 font-mono text-xs font-semibold text-blue-600">
-                                    {item.opp_number || 'N/A'}
-                                  </td>
-                                  <td className="py-4 px-4 font-mono text-xs text-slate-600">
-                                    {item.stock_code}
-                                  </td>
-                                  <td className="py-4 px-4">
-                                    <div className="inline-flex items-center gap-1 text-xs text-slate-600 bg-slate-100 px-2.5 py-1 rounded-md">
-                                      <MapPin className="w-3 h-3 text-slate-400" />
-                                      {item.location || '-'}
-                                    </div>
-                                  </td>
-                                  <td className="py-4 px-4 text-center">
-                                    {getStatusBadge(item)}
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {hasMore && (
-                    <div className="bg-slate-50/50 border-t border-slate-100 px-6 py-2.5 text-center">
-                      <button 
-                        onClick={() => toggleExpand(cust.customerName)}
-                        className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-700 transition-colors py-1 px-3 rounded-lg hover:bg-blue-50"
-                      >
-                        <span>{isExpanded ? 'ย่อเก็บรายการ' : `แสดงเพิ่มเติม (อีก ${extraItems.length} รายการ)`}</span>
-                        {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                      </button>
-                    </div>
-                  )}
-
-                </div>
-              );
-            })
-          )}
-        </div>
+        {/* แสดงผลแยกตาม Tab ที่เลือก */}
+        {activeTab === 'customers' ? (
+          <div className="space-y-6">
+            {regularCustomers.length === 0 ? (
+              <div className="text-center py-16 bg-white rounded-2xl border border-slate-200/80 text-slate-400">
+                <Building2 className="w-12 h-12 mx-auto text-slate-300 mb-3" />
+                <p className="text-sm font-medium text-slate-600">ไม่พบรายการลูกค้าของคุณ ({currentUser})</p>
+                <p className="text-xs text-slate-400 mt-1">กดปุ่ม "เพิ่ม OPP / ลูกค้าใหม่" ด้านบนเพื่อเริ่มติดตามสต็อก</p>
+              </div>
+            ) : (
+              regularCustomers.map(renderCard)
+            )}
+          </div>
+        ) : (
+          <div className="space-y-6">
+            {excelProjectCustomers.length === 0 ? (
+              <div className="text-center py-16 bg-white rounded-2xl border border-slate-200/80 text-slate-400">
+                <FileSpreadsheet className="w-12 h-12 mx-auto text-slate-300 mb-3" />
+                <p className="text-sm font-medium text-slate-600">ยังไม่มีโครงการจากไฟล์ Excel</p>
+                <p className="text-xs text-slate-400 mt-1">กดปุ่ม "อัปโหลด Excel โครงการ" ด้านบนเพื่อนำเข้าไฟล์</p>
+              </div>
+            ) : (
+              excelProjectCustomers.map(renderCard)
+            )}
+          </div>
+        )}
       </main>
 
       {/* Modal เพิ่มลูกค้าใหม่ */}
@@ -724,7 +797,7 @@ export default function StockDashboard() {
               <div className="flex justify-end space-x-3 pt-4 border-t border-slate-100">
                 <button 
                   onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-2.5 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors"
+                  className="px-4 py-2.5 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
                   disabled={loading}
                 >
                   ยกเลิก
@@ -732,7 +805,7 @@ export default function StockDashboard() {
                 <button 
                   onClick={handleAddOpp}
                   disabled={loading}
-                  className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-medium flex items-center gap-2 shadow-sm transition-all active:scale-95 disabled:opacity-50"
+                  className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-medium flex items-center gap-2 shadow-sm transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
                 >
                   {loading && <Loader2 className="w-4 h-4 animate-spin" />}
                   <span>{loading ? 'กำลังดึงสต็อกสด...' : '📥 ดึงข้อมูล'}</span>
@@ -764,7 +837,7 @@ export default function StockDashboard() {
               <div className="flex items-center gap-2 mt-1.5 text-[11px] text-slate-500 font-mono">
                 <span>Code: {selectedItemForThreshold.stock_code}</span>
                 <span>•</span>
-                <span>มีอยู่จริง: {selectedItemForThreshold.quantity} ชิ้น</span>
+                <span>มีอยู่จริง: {selectedItemForThreshold.quantity || 0} ชิ้น</span>
               </div>
             </div>
 
@@ -777,7 +850,7 @@ export default function StockDashboard() {
                 <button
                   type="button"
                   onClick={() => setNewMinStockValue(prev => Math.max(1, prev - 1))}
-                  className="w-10 h-10 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center transition-colors active:scale-95"
+                  className="w-10 h-10 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center transition-colors active:scale-95 cursor-pointer"
                 >
                   <Minus className="w-4 h-4" />
                 </button>
@@ -793,7 +866,7 @@ export default function StockDashboard() {
                 <button
                   type="button"
                   onClick={() => setNewMinStockValue(prev => prev + 1)}
-                  className="w-10 h-10 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center transition-colors active:scale-95"
+                  className="w-10 h-10 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center transition-colors active:scale-95 cursor-pointer"
                 >
                   <Plus className="w-4 h-4" />
                 </button>
@@ -808,7 +881,7 @@ export default function StockDashboard() {
               <button
                 type="button"
                 onClick={() => setThresholdModalOpen(false)}
-                className="px-4 py-2.5 rounded-xl text-xs font-semibold text-slate-500 hover:bg-slate-100 transition-colors"
+                className="px-4 py-2.5 rounded-xl text-xs font-semibold text-slate-500 hover:bg-slate-100 transition-colors cursor-pointer"
                 disabled={isUpdatingThreshold}
               >
                 ยกเลิก
@@ -817,7 +890,7 @@ export default function StockDashboard() {
                 type="button"
                 onClick={handleSaveThreshold}
                 disabled={isUpdatingThreshold}
-                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-all active:scale-95 disabled:opacity-50"
+                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
               >
                 {isUpdatingThreshold && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                 <span>บันทึกเกณฑ์</span>
@@ -827,7 +900,7 @@ export default function StockDashboard() {
         </div>
       )}
 
-      {/* 🎨 Delete Confirmation Modal */}
+      {/* Delete Confirmation Modal */}
       {deleteModalOpen && customerToDelete && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 duration-200 text-center">
@@ -836,10 +909,10 @@ export default function StockDashboard() {
             </div>
 
             <h3 className="text-base font-bold text-slate-900 mb-1">
-              ยืนยันการลบลูกค้า?
+              ยืนยันการลบรายการ?
             </h3>
             <p className="text-xs text-slate-500 leading-relaxed mb-6">
-              คุณต้องการลบลูกค้า <span className="font-bold text-slate-800">"{customerToDelete}"</span> ออกจากรายการดูแลของคุณหรือไม่?
+              คุณต้องการลบรายการ <span className="font-bold text-slate-800">"{customerToDelete}"</span> ออกจากรายการของคุณหรือไม่?
             </p>
 
             <div className="flex items-center gap-2">
@@ -850,7 +923,7 @@ export default function StockDashboard() {
                   setCustomerToDelete(null);
                 }}
                 disabled={isDeleting}
-                className="w-1/2 py-2.5 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 transition-colors"
+                className="w-1/2 py-2.5 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
               >
                 ยกเลิก
               </button>
@@ -858,7 +931,7 @@ export default function StockDashboard() {
                 type="button"
                 onClick={confirmDeleteCustomer}
                 disabled={isDeleting}
-                className="w-1/2 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all active:scale-95 shadow-sm disabled:opacity-50"
+                className="w-1/2 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all active:scale-95 shadow-sm disabled:opacity-50 cursor-pointer"
               >
                 {isDeleting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                 <span>{isDeleting ? 'กำลังลบ...' : 'ยืนยันลบ'}</span>
@@ -868,7 +941,7 @@ export default function StockDashboard() {
         </div>
       )}
 
-      {/* Custom Alert Modal สำหรับ Dashboard */}
+      {/* Alert Notification Modal */}
       {resultModalOpen && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 duration-200 text-center">
@@ -887,7 +960,7 @@ export default function StockDashboard() {
 
             <button
               onClick={() => setResultModalOpen(false)}
-              className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold transition-all active:scale-95 shadow-sm"
+              className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold transition-all active:scale-95 shadow-sm cursor-pointer"
             >
               ตกลง
             </button>
