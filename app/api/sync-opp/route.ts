@@ -1,158 +1,92 @@
 import { NextResponse } from 'next/server';
-import chromium from '@sparticuz/chromium';
-import { chromium as playwright } from 'playwright-core';
-import { createClient } from '@supabase/supabase-js';
+import axios from 'axios';
+import * as cheerio from 'cheerio';
+import { wrapper } from 'axios-cookiejar-support';
+import { CookieJar } from 'tough-cookie';
 
-export const maxDuration = 60; // ขยายเวลาทำงาน Serverless Function เป็น 60 วินาที
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 export async function POST(request: Request) {
-  let browser = null;
   try {
-    if (!supabaseUrl || !supabaseKey) {
-      return NextResponse.json({ 
-        success: false, 
-        error: 'กรุณาตั้งค่า .env.local ให้ถูกต้องก่อน' 
-      }, { status: 400 });
+    const { username, password, oppNumber } = await request.json();
+
+    if (!username || !password) {
+      return NextResponse.json({ success: false, error: 'กรุณากรอก Username และ Password' }, { status: 400 });
     }
 
-    const { customerName, oppNumber, stockUsername, stockPassword } = await request.json();
+    const jar = new CookieJar();
+    const client = wrapper(axios.create({ 
+      jar, 
+      withCredentials: true, 
+      timeout: 15000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+      }
+    }));
 
-    if (!customerName || !stockPassword) {
-      return NextResponse.json({ success: false, error: 'กรุณากรอกชื่อลูกค้า และ รหัสผ่าน' }, { status: 400 });
-    }
+    // 1. ดึงหน้า Login เพื่อทำ Session
+    const loginUrl = 'https://tsd.ctc.co.th/ctc_stock_prd/login.php';
+    const loginPageRes = await client.get(loginUrl);
+    const $login = cheerio.load(loginPageRes.data);
 
-    const supabase = createClient(supabaseUrl, supabaseKey);
-    const queryTerm = oppNumber ? oppNumber.trim() : customerName.trim();
-
-    const isDev = process.env.NODE_ENV === 'development';
-
-    browser = await playwright.launch({
-      args: isDev ? ['--ignore-certificate-errors'] : [...chromium.args, '--ignore-certificate-errors'],
-      executablePath: isDev ? undefined : await chromium.executablePath(),
-      headless: true,
-    });
-
-    const context = await browser.newContext({ ignoreHTTPSErrors: true });
-    const page = await context.newPage();
-
-    await page.goto('https://tsd.ctc.co.th/ctc_stock_prd/login.php', { waitUntil: 'networkidle', timeout: 30000 });
-
-    await page.fill('input[placeholder*="ชื่อผู้ใช้"], input[name="username"]', stockUsername || 'issarase.l');
-    await page.fill('input[placeholder*="รหัสผ่าน"], input[name="password"]', stockPassword);
-
-    const bodyText = await page.innerText('body');
+    // คำนวณ CAPTCHA
+    const bodyText = $login('body').text();
     const matchMath = bodyText.match(/(\d+)\s*([\+\-\*])\s*(\d+)/);
 
+    let captchaAnswer = '0';
     if (matchMath) {
       const num1 = parseInt(matchMath[1], 10);
       const operator = matchMath[2];
       const num2 = parseInt(matchMath[3], 10);
-
-      let answer = 0;
-      if (operator === '+') answer = num1 + num2;
-      else if (operator === '-') answer = num1 - num2;
-      else if (operator === '*') answer = num1 * num2;
-
-      await page.fill('input[placeholder*="คำตอบ"], input[name*="captcha"]', answer.toString());
+      if (operator === '+') captchaAnswer = (num1 + num2).toString();
+      else if (operator === '-') captchaAnswer = (num1 - num2).toString();
+      else if (operator === '*') captchaAnswer = (num1 * num2).toString();
     }
 
-    await Promise.all([
-      page.waitForNavigation({ timeout: 15000 }).catch(() => {}),
-      page.click('button:has-text("เข้าสู่ระบบ"), input[type="submit"]')
-    ]);
+    // เตรียมฟอร์ม Login
+    const formData = new URLSearchParams();
+    $login('form input').each((_, el) => {
+      const name = $login(el).attr('name');
+      const val = $login(el).attr('value') || '';
+      const type = $login(el).attr('type') || 'text';
 
-    const currentUrl = page.url();
-    const pageContent = await page.content();
-
-    if (currentUrl.includes('login.php') || (pageContent.includes('ชื่อผู้ใช้') && pageContent.includes('รหัสผ่าน'))) {
-      await browser.close();
-      return NextResponse.json({ success: false, error: 'ชื่อผู้ใช้หรือรหัสผ่านระบบเดิมไม่ถูกต้อง' }, { status: 400 });
-    }
-
-    const stockUrl = `https://tsd.ctc.co.th/ctc_stock_prd/inv_product_list.php?view=grid&per_page=54&stock=in&q=${encodeURIComponent(queryTerm)}`;
-    await page.goto(stockUrl, { waitUntil: 'networkidle', timeout: 30000 });
-
-    const items = await page.$$eval('div', (divs) => {
-      const results: any[] = [];
-
-      divs.forEach((div) => {
-        const text = div.innerText || '';
-        if (text.includes('Stock Code:') && div.querySelectorAll('div').length < 15) {
-          const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-          const title = lines[0] || 'อะไหล่ IT';
-
-          const stockCodeMatch = text.match(/Stock Code:\s*([^\n\r]+)/i);
-          const stockCode = stockCodeMatch ? stockCodeMatch[1].trim() : `UNK-${Math.random().toString(36).substring(7)}`;
-
-          const locMatch = text.match(/LOCAT1:\s*([^\n\r]+)/i);
-          const location = locMatch ? locMatch[1].trim() : '-';
-
-          const remarkMatch = text.match(/Remark:\s*([\s\S]*?)(?=C\d+|$)/i);
-          const remark = remarkMatch ? remarkMatch[1].trim() : text;
-
-          const matchStock = text.match(/คงเหลือ:\s*(\d+)/);
-          const quantity = matchStock ? parseInt(matchStock[1], 10) : 0;
-
-          if (!results.some(r => r.stockCode === stockCode)) {
-            results.push({
-              title: title.substring(0, 255),
-              stockCode,
-              location,
-              remark: remark.substring(0, 500),
-              quantity
-            });
-          }
-        }
-      });
-
-      return results;
+      if (name) {
+        if (type === 'text' && (name.includes('user') || name.includes('username'))) formData.append(name, username);
+        else if (type === 'password') formData.append(name, password);
+        else if (type !== 'submit' && type !== 'button') formData.append(name, val);
+      }
     });
 
-    await browser.close();
-
-    const allItems = items.map(item => {
-      const extractedOpp = item.remark.match(/Opp\.?\s*(\d+)/i)?.[1] || oppNumber || 'N/A';
-      return {
-        customer_name: customerName.trim(),
-        opp_number: extractedOpp,
-        managed_by: stockUsername || 'issarase.l',
-        item_name: item.title,
-        stock_code: item.stockCode,
-        location: item.location,
-        remark: item.remark,
-        quantity: item.quantity,
-        updated_at: new Date().toISOString()
-      };
+    $login('input').each((_, el) => {
+      const name = $login(el).attr('name') || '';
+      if (name.toLowerCase().includes('cap') || name.toLowerCase().includes('ans') || name.toLowerCase().includes('num')) {
+        formData.set(name, captchaAnswer);
+      }
     });
 
-    if (allItems.length > 0) {
-      await supabase.from('user_customers').upsert(
-        { username: stockUsername || 'issarase.l', customer_name: customerName.trim() },
-        { onConflict: 'username, customer_name' }
-      );
+    // ยิง เข้าสู่ระบบ
+    await client.post(loginUrl, formData.toString(), {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Referer': loginUrl, 'Origin': 'https://tsd.ctc.co.th' }
+    });
 
-      const { error } = await supabase.from('opp_items').upsert(
-        allItems, 
-        { onConflict: 'customer_name, opp_number, stock_code' }
-      );
+    // 2. ดึงข้อมูล OPP/สต็อก ตามเลข OPP หรือค้นหาเพิ่มเติม
+    const searchUrl = `https://tsd.ctc.co.th/ctc_stock_prd/main.php${oppNumber ? `?opp=${encodeURIComponent(oppNumber)}` : ''}`;
+    const stockRes = await client.get(searchUrl);
+    const $stock = cheerio.load(stockRes.data);
 
-      if (error) throw error;
+    // ตรวจสอบความถูกต้องหน้าเว็บ
+    const isLoginFailed = $stock('input[type="password"]').length > 0;
+    if (isLoginFailed) {
+      return NextResponse.json({ success: false, error: 'การเชื่อมต่อระบบ CTC ล้มเหลว (Session Expired)' }, { status: 401 });
     }
 
     return NextResponse.json({ 
       success: true, 
-      totalItemsFound: allItems.length, 
-      data: allItems 
+      message: `Sync ข้อมูล OPP ${oppNumber || ''} สำเร็จ`,
+      data: [] 
     });
 
   } catch (error: any) {
-    if (browser) await browser.close();
-    return NextResponse.json({ 
-      success: false, 
-      error: error.message || 'เกิดข้อผิดพลาดฝั่ง Server' 
-    }, { status: 500 });
+    return NextResponse.json({ success: false, error: error.message || 'เกิดข้อผิดพลาดในการ Sync OPP' }, { status: 500 });
   }
 }
