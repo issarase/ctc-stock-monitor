@@ -13,7 +13,12 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 export async function POST(request: Request) {
   try {
-    const { username, password } = await request.json();
+    const body = await request.json().catch(() => ({}));
+    
+    // 🎯 แปลง Username เป็นตัวพิมพ์เล็กทั้งหมดเสมอ (toLowerCase)
+    const rawUsername = body.username || '';
+    const username = rawUsername.trim().toLowerCase();
+    const password = (body.password || '').trim();
 
     if (!username || !password) {
       return NextResponse.json({ success: false, error: 'กรุณากรอก Username และ Password' }, { status: 400 });
@@ -82,7 +87,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, error: 'ชื่อผู้ใช้ หรือ รหัสผ่านระบบ CTC ไม่ถูกต้อง' }, { status: 401 });
     }
 
-    // 💾 4. บันทึก/อัปเดต CTC Credentials ลง Supabase เมื่อล็อกอินสำเร็จ
+    // 💾 4. บันทึก/อัปเดต CTC Credentials ลง Supabase เมื่อล็อกอินสำเร็จ (ใช้ username ตัวเล็กเสมอ)
     await supabase
       .from('user_credentials')
       .upsert({

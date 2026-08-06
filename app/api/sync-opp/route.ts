@@ -14,7 +14,8 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
-    const username = body.username || body.managed_by || 'issarase.l';
+    const rawUsername = body.username || body.managed_by || 'issarase.l';
+    const username = rawUsername.trim().toLowerCase();
     const customerName = (body.customerName || body.customer_name || body.customerId || '').trim();
     const oppNumber = (body.oppNumber || '').trim();
     const querySearch = oppNumber || customerName;
