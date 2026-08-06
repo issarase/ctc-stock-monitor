@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
     const sheetName = workbook.SheetNames[0];
     const sheetData = XLSX.utils.sheet_to_json<Record<string, any>>(workbook.Sheets[sheetName]);
 
-    // 2. เติม prefix คำว่า "โครงการ " ไว้หน้าชื่อไฟล์เสมอ เพื่อให้ระบบแยกแยะการ์ด Excel ได้ 100%
+    // 2. ตั้งชื่อโครงการ
     const rawFileName = file.name.replace(/\.[^/.]+$/, "").trim();
     const customerName = rawFileName.startsWith('โครงการ') ? rawFileName : `โครงการ ${rawFileName}`;
 
@@ -70,15 +70,8 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // 5. เคลียร์รายการเก่าของโครงการนี้ใน opp_items ก่อน (ถ้ามี)
-    await supabase
-      .from('opp_items')
-      .delete()
-      .eq('customer_name', customerName)
-      .eq('managed_by', username);
-
-    // 6. ค้นหาข้อมูลสินค้าและเตรียมแถว Insert เข้า opp_items
-    const rowsToInsert = [];
+    // 5. ค้นหาข้อมูลสินค้าและเตรียมแถวข้อมูล
+    const rowsToProcess = [];
 
     for (const item of itemsToProcess) {
       const searchPattern = `%${item.keyword}%`;
@@ -90,7 +83,7 @@ export async function POST(request: NextRequest) {
 
       const matched = matchedStocks && matchedStocks.length > 0 ? matchedStocks[0] : null;
 
-      rowsToInsert.push({
+      rowsToProcess.push({
         managed_by: username,
         customer_name: customerName,
         stock_code: matched?.stock_code || item.keyword,
@@ -103,20 +96,20 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // 7. Insert ข้อมูลลง opp_items
-    const { error: insertError } = await supabase
+    // 6. ใช้ Upsert โดยอิงตาม Unique Constraint ของตาราง ป้องกันคีย์ซ้ำชนกัน
+    const { error: upsertError } = await supabase
       .from('opp_items')
-      .insert(rowsToInsert);
+      .upsert(rowsToProcess, { onConflict: 'customer_name,opp_number,stock_code' });
 
-    if (insertError) {
-      console.error('Supabase Insert Error:', insertError);
-      return NextResponse.json({ error: `บันทึกไม่สำเร็จ: ${insertError.message}` }, { status: 500 });
+    if (upsertError) {
+      console.error('Supabase Upsert Error:', upsertError);
+      return NextResponse.json({ error: `บันทึกไม่สำเร็จ: ${upsertError.message}` }, { status: 500 });
     }
 
     return NextResponse.json({ 
       success: true, 
-      message: `นำเข้า${customerName} สำเร็จ (${rowsToInsert.length} รายการ)!`,
-      totalItems: rowsToInsert.length 
+      message: `นำเข้า${customerName} สำเร็จ (${rowsToProcess.length} รายการ)!`,
+      totalItems: rowsToProcess.length 
     });
 
   } catch (error: any) {
