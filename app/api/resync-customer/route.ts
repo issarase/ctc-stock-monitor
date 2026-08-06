@@ -3,6 +3,8 @@ import chromium from '@sparticuz/chromium';
 import { chromium as playwright } from 'playwright-core';
 import { createClient } from '@supabase/supabase-js';
 
+export const maxDuration = 60; // ขยายเวลาทำงาน Serverless Function เป็น 60 วินาที
+
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 

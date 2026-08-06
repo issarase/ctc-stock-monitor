@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import chromium from '@sparticuz/chromium';
 import { chromium as playwright } from 'playwright-core';
 
+export const maxDuration = 60; // เพิ่มเวลา timeout สำหรับ Vercel
+
 export async function POST(request: Request) {
   let browser = null;
   try {
@@ -14,7 +16,9 @@ export async function POST(request: Request) {
     const isDev = process.env.NODE_ENV === 'development';
 
     browser = await playwright.launch({
-      args: isDev ? ['--ignore-certificate-errors'] : [...chromium.args, '--ignore-certificate-errors'],
+      args: isDev 
+        ? ['--ignore-certificate-errors'] 
+        : [...chromium.args, '--no-sandbox', '--disable-setuid-sandbox', '--ignore-certificate-errors'],
       executablePath: isDev ? undefined : await chromium.executablePath(),
       headless: true,
     });
@@ -42,7 +46,7 @@ export async function POST(request: Request) {
     }
 
     await Promise.all([
-      page.waitForNavigation({ timeout: 15000 }).catch(() => {}),
+      page.waitForNavigation({ timeout: 20000 }).catch(() => {}),
       page.click('button:has-text("เข้าสู่ระบบ"), input[type="submit"]')
     ]);
 
@@ -57,6 +61,6 @@ export async function POST(request: Request) {
 
   } catch (error: any) {
     if (browser) await browser.close();
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    return NextResponse.json({ success: false, error: error.message || 'เกิดข้อผิดพลาดในการเชื่อมต่อระบบ CTC' }, { status: 500 });
   }
 }
