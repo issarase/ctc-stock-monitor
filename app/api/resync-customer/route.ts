@@ -91,11 +91,14 @@ export async function POST(request: Request) {
       .eq('customer_name', customerName)
       .eq('managed_by', username);
 
-    let searchQuery = customerName;
-    if (existingItems && existingItems.length > 0) {
-      const validOpp = existingItems.find(i => i.opp_number && i.opp_number !== 'N/A')?.opp_number;
-      if (validOpp) searchQuery = validOpp;
-    }
+    //let searchQuery = customerName;
+    //if (existingItems && existingItems.length > 0) {
+    //  const validOpp = existingItems.find(i => i.opp_number && i.opp_number !== 'N/A')?.opp_number;
+    //  if (validOpp) searchQuery = validOpp;
+    //}
+
+    // ✅ ให้ใช้ชื่อการ์ด (customerName) ค้นหาตรงๆ เสมอ:
+    const searchQuery = customerName;
 
     // 🎯 4. ยิง per_page=52 พร้อมกัน 2 หน้าแบบขนาน (Page 1 และ Page 2)
     const pagesToFetch = [1, 2];

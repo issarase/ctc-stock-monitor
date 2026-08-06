@@ -46,7 +46,7 @@ export default function StockDashboard() {
   const [newMinStockValue, setNewMinStockValue] = useState<number>(2);
   const [isUpdatingThreshold, setIsUpdatingThreshold] = useState(false);
 
-  // 🗑️ Delete Confirmation Modal State
+  // Delete Confirmation Modal State
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [customerToDelete, setCustomerToDelete] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -97,6 +97,7 @@ export default function StockDashboard() {
       const data = await res.json();
 
       if (data.success) {
+        setResultModalOpen(false); // ปิด Pop-up ค้างถ้ามี
         localStorage.setItem('ctc_user', loginUserInput.trim());
         localStorage.setItem('ctc_pass', loginPassInput.trim());
         setCurrentUser(loginUserInput.trim());
@@ -265,13 +266,11 @@ export default function StockDashboard() {
     }
   };
 
-  // 🎯 เปิด Pop-up ยืนยันการลบ
   const handleDeleteCustomer = (custName: string) => {
     setCustomerToDelete(custName);
     setDeleteModalOpen(true);
   };
 
-  // 🎯 กดยืนยันการลบจริง
   const confirmDeleteCustomer = async () => {
     if (!customerToDelete) return;
 
@@ -361,9 +360,10 @@ export default function StockDashboard() {
       return 0;
     });
 
+  // 🔒 ถ้ายังไม่ได้ล็อกอิน ให้โชว์หน้า Login
   if (!currentUser) {
     return (
-      <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4 font-sans">
+      <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4 font-sans relative">
         <div className="bg-white rounded-3xl max-w-md w-full p-8 shadow-xl border border-slate-200/80">
           <div className="text-center mb-8">
             <div className="bg-blue-600 w-12 h-12 rounded-2xl text-white flex items-center justify-center mx-auto mb-4 shadow-md shadow-blue-200">
@@ -410,10 +410,38 @@ export default function StockDashboard() {
             </button>
           </form>
         </div>
+
+        {/* 🎨 Alert Pop-up สำหรับหน้า Login */}
+        {resultModalOpen && (
+          <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 duration-200 text-center">
+              <div className={`w-12 h-12 rounded-2xl mx-auto mb-4 flex items-center justify-center ${
+                resultModalData.isSuccess ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'
+              }`}>
+                {resultModalData.isSuccess ? <Check className="w-6 h-6" /> : <AlertTriangle className="w-6 h-6" />}
+              </div>
+
+              <h3 className="text-base font-bold text-slate-900 mb-1">
+                {resultModalData.title}
+              </h3>
+              <p className="text-xs text-slate-500 leading-relaxed mb-6">
+                {resultModalData.message}
+              </p>
+
+              <button
+                onClick={() => setResultModalOpen(false)}
+                className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold transition-all active:scale-95 shadow-sm"
+              >
+                ตกลง
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
 
+  // 🔓 ถ้าล็อกอินแล้ว โชว์หน้า Dashboard
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 font-sans">
       <header className="bg-white border-b border-slate-200 sticky top-0 z-10 shadow-sm">
@@ -799,7 +827,7 @@ export default function StockDashboard() {
         </div>
       )}
 
-      {/* 🎨 🗑️ Custom Delete Confirmation Modal */}
+      {/* 🎨 Delete Confirmation Modal */}
       {deleteModalOpen && customerToDelete && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 duration-200 text-center">
@@ -840,7 +868,7 @@ export default function StockDashboard() {
         </div>
       )}
 
-      {/* Custom Alert Modal */}
+      {/* Custom Alert Modal สำหรับ Dashboard */}
       {resultModalOpen && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 duration-200 text-center">
