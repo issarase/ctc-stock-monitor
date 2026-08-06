@@ -18,7 +18,11 @@ import {
   RotateCw,
   LogOut,
   Lock,
-  User
+  User,
+  SlidersHorizontal,
+  Minus,
+  Check,
+  ArrowUpDown
 } from 'lucide-react';
 
 export default function StockDashboard() {
@@ -32,8 +36,28 @@ export default function StockDashboard() {
   // Dashboard State
   const [customers, setCustomers] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
+  const [sortBy, setSortBy] = useState<'name_asc' | 'name_desc' | 'items_desc' | 'items_asc'>('name_asc');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [expandedCustomers, setExpandedCustomers] = useState<Record<string, boolean>>({});
+
+  // Threshold Modal State
+  const [thresholdModalOpen, setThresholdModalOpen] = useState(false);
+  const [selectedItemForThreshold, setSelectedItemForThreshold] = useState<any>(null);
+  const [newMinStockValue, setNewMinStockValue] = useState<number>(2);
+  const [isUpdatingThreshold, setIsUpdatingThreshold] = useState(false);
+
+  // 🗑️ Delete Confirmation Modal State
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [customerToDelete, setCustomerToDelete] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  // Alert Notification Modal State
+  const [resultModalOpen, setResultModalOpen] = useState(false);
+  const [resultModalData, setResultModalData] = useState<{ title: string; message: string; isSuccess: boolean }>({
+    title: '',
+    message: '',
+    isSuccess: true
+  });
 
   // Loading States
   const [syncingAll, setSyncingAll] = useState(false);
@@ -44,7 +68,6 @@ export default function StockDashboard() {
   const [newOppNumber, setNewOppNumber] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // เช็กว่ามี Session ล็อกอินค้างไว้ไหมเมื่อเปิดเว็บ
   useEffect(() => {
     const savedUser = localStorage.getItem('ctc_user');
     const savedPass = localStorage.getItem('ctc_pass');
@@ -55,9 +78,14 @@ export default function StockDashboard() {
     }
   }, []);
 
+  const showResultModal = (title: string, message: string, isSuccess = true) => {
+    setResultModalData({ title, message, isSuccess });
+    setResultModalOpen(true);
+  };
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!loginUserInput || !loginPassInput) return alert('กรุณากรอก Username และ Password');
+    if (!loginUserInput || !loginPassInput) return showResultModal('แจ้งเตือน', 'กรุณากรอก Username และ Password', false);
 
     setIsLoggingIn(true);
     try {
@@ -75,10 +103,10 @@ export default function StockDashboard() {
         setCurrentPassword(loginPassInput.trim());
         fetchDashboardData(loginUserInput.trim());
       } else {
-        alert(`ล็อกอินไม่สำเร็จ: ${data.error}`);
+        showResultModal('ล็อกอินไม่สำเร็จ', data.error || 'โปรดตรวจสอบรหัสผ่านอีกครั้ง', false);
       }
     } catch (err: any) {
-      alert(`Error: ${err.message}`);
+      showResultModal('เกิดข้อผิดพลาด', err.message, false);
     } finally {
       setIsLoggingIn(false);
     }
@@ -110,67 +138,103 @@ export default function StockDashboard() {
     setExpandedCustomers(prev => ({ ...prev, [custName]: !prev[custName] }));
   };
 
-  const handleResyncSingle = async (custName: string) => {
-    if (!currentUser || !currentPassword) return;
+  const openThresholdModal = (item: any) => {
+    setSelectedItemForThreshold(item);
+    setNewMinStockValue(item.min_stock ?? 2);
+    setThresholdModalOpen(true);
+  };
 
+  const handleSaveThreshold = async () => {
+    if (!selectedItemForThreshold) return;
+
+    if (isNaN(newMinStockValue) || newMinStockValue < 1) {
+      return showResultModal('แจ้งเตือน', 'กรุณากรอกตัวเลขจำนวนขั้นต่ำที่ถูกต้อง (อย่างน้อย 1 ชิ้น)', false);
+    }
+
+    setIsUpdatingThreshold(true);
+    try {
+      const res = await fetch('/api/update-threshold', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemId: selectedItemForThreshold.id, minStock: newMinStockValue }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setThresholdModalOpen(false);
+        if (currentUser) fetchDashboardData(currentUser);
+        showResultModal('บันทึกสำเร็จ', 'อัปเดตเกณฑ์สต็อกคงเหลือเรียบร้อยแล้ว');
+      } else {
+        showResultModal('เกิดข้อผิดพลาด', data.error || 'ไม่สามารถอัปเดตเกณฑ์ได้', false);
+      }
+    } catch (err: any) {
+      showResultModal('เกิดข้อผิดพลาด', err.message, false);
+    } finally {
+      setIsUpdatingThreshold(false);
+    }
+  };
+
+  const handleResyncCustomer = async (custName: string) => {
+    const username = currentUser || localStorage.getItem('ctc_user') || 'issarase.l';
     setSyncingCustomer(prev => ({ ...prev, [custName]: true }));
+
     try {
       const res = await fetch('/api/resync-customer', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body: JSON.stringify({ 
+          username: username,
           customerName: custName,
-          stockUsername: currentUser,
-          stockPassword: currentPassword
         })
       });
+
       const data = await res.json();
       if (data.success) {
-        alert(`อัปเดตสต็อกสดเรียบร้อย! พบ ${data.count} รายการสำหรับ ${custName}`);
-        fetchDashboardData(currentUser);
+        const count = data.totalItemsFound ?? data.count ?? data.updatedCount ?? 0;
+        showResultModal('อัปเดตสต็อกสดเรียบร้อย!', `พบ ${count} รายการสำหรับ ${custName}`);
+        fetchDashboardData(username);
       } else {
-        alert(`เกิดข้อผิดพลาด: ${data.error}`);
+        showResultModal('เกิดข้อผิดพลาด', data.error, false);
       }
     } catch (err: any) {
-      alert(`Error: ${err.message}`);
+      showResultModal('เกิดข้อผิดพลาด', err.message, false);
     } finally {
       setSyncingCustomer(prev => ({ ...prev, [custName]: false }));
     }
   };
 
   const handleResyncAll = async () => {
-    if (customers.length === 0) return alert('ไม่มีรายการลูกค้าในระบบของคุณ');
-    if (!currentUser || !currentPassword) return;
+    if (customers.length === 0) return showResultModal('แจ้งเตือน', 'ไม่มีรายการลูกค้าในระบบของคุณ', false);
+    if (!currentUser) return;
 
     setSyncingAll(true);
-    let successCount = 0;
 
-    for (const cust of customers) {
-      try {
-        const res = await fetch('/api/resync-customer', {
+    try {
+      const fetchPromises = customers.map(cust => 
+        fetch('/api/resync-customer', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            username: currentUser,
             customerName: cust.customerName,
-            stockUsername: currentUser,
-            stockPassword: currentPassword
           })
-        });
-        const data = await res.json();
-        if (data.success) successCount++;
-      } catch (err) {
-        console.error(err);
-      }
-    }
+        }).then(res => res.json()).catch(() => ({ success: false }))
+      );
 
-    setSyncingAll(false);
-    alert(`อัปเดตสต็อกสดเสร็จสิ้น (${successCount}/${customers.length} ไซท์)`);
-    fetchDashboardData(currentUser);
+      const results = await Promise.all(fetchPromises);
+      const successCount = results.filter(r => r.success).length;
+
+      showResultModal('ดึงสต็อกสดเรียบร้อยแล้ว!', `อัปเดตข้อมูลเสร็จสิ้น (${successCount}/${customers.length} ไซท์)`);
+      fetchDashboardData(currentUser);
+    } catch (err: any) {
+      showResultModal('เกิดข้อผิดพลาด', err.message, false);
+    } finally {
+      setSyncingAll(false);
+    }
   };
 
   const handleAddOpp = async () => {
-    if (!customerName) return alert('กรุณากรอกชื่อลูกค้า / โครงการ');
-    if (!currentUser || !currentPassword) return;
+    if (!customerName) return showResultModal('แจ้งเตือน', 'กรุณากรอกชื่อลูกค้า / โครงการ', false);
+    const username = currentUser || localStorage.getItem('ctc_user') || 'issarase.l';
 
     setLoading(true);
     try {
@@ -178,82 +242,125 @@ export default function StockDashboard() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
+          username: username,
           customerName: customerName.trim(),
-          oppNumber: newOppNumber.trim(), 
-          stockUsername: currentUser,
-          stockPassword: currentPassword
+          oppNumber: newOppNumber.trim(),
         })
       });
 
       const data = await res.json();
       if (data.success) {
-        alert(`ดึงข้อมูลสำเร็จ! พบสินค้า ${data.totalItemsFound} รายการสำหรับลูกค้า ${customerName}`);
         setIsModalOpen(false);
         setCustomerName('');
         setNewOppNumber('');
-        fetchDashboardData(currentUser);
+        fetchDashboardData(username);
+        showResultModal('ดึงข้อมูลสำเร็จ!', `พบสินค้า ${data.totalItemsFound || 0} รายการสำหรับลูกค้า ${customerName}`);
       } else {
-        alert(`เกิดข้อผิดพลาด: ${data.error}`);
+        showResultModal('เกิดข้อผิดพลาด', data.error, false);
       }
     } catch (err: any) {
-      alert(`Error: ${err.message}`);
+      showResultModal('เกิดข้อผิดพลาด', err.message, false);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleDeleteCustomer = async (custName: string) => {
-    if (confirm(`คุณต้องการลบลูกค้า "${custName}" ออกจากระบบของคุณหรือไม่?`)) {
-      try {
-        const res = await fetch('/api/delete-opp', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ customerName: custName })
-        });
-        if ((await res.json()).success && currentUser) {
-          fetchDashboardData(currentUser);
-        }
-      } catch (err) {
-        console.error(err);
+  // 🎯 เปิด Pop-up ยืนยันการลบ
+  const handleDeleteCustomer = (custName: string) => {
+    setCustomerToDelete(custName);
+    setDeleteModalOpen(true);
+  };
+
+  // 🎯 กดยืนยันการลบจริง
+  const confirmDeleteCustomer = async () => {
+    if (!customerToDelete) return;
+
+    setIsDeleting(true);
+    try {
+      const res = await fetch('/api/delete-opp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customerName: customerToDelete, username: currentUser })
+      });
+      
+      const data = await res.json();
+      if (data.success && currentUser) {
+        setDeleteModalOpen(false);
+        fetchDashboardData(currentUser);
+        showResultModal('ลบสำเร็จ', `ลบลูกค้า "${customerToDelete}" ออกจากรายการดูแลเรียบร้อยแล้ว`);
+      } else {
+        showResultModal('เกิดข้อผิดพลาด', data.error || 'ไม่สามารถลบข้อมูลได้', false);
       }
+    } catch (err: any) {
+      showResultModal('เกิดข้อผิดพลาด', err.message, false);
+    } finally {
+      setIsDeleting(false);
+      setCustomerToDelete(null);
     }
   };
 
-  const getStatusBadge = (qty: number) => {
-    if (qty > 1) {
+  const getStatusBadge = (item: any) => {
+    const qty = item.quantity || 0;
+    const minStock = item.min_stock ?? 2;
+
+    if (qty >= minStock) {
       return (
-        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+        <button
+          onClick={() => openThresholdModal(item)}
+          title={`เกณฑ์ปัจจุบัน: ${minStock} ชิ้นขึ้นไป (คลิกเพื่อปรับตั้งค่า)`}
+          className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-all active:scale-95 cursor-pointer shadow-2xs"
+        >
           <CheckCircle2 className="w-3.5 h-3.5" /> พร้อมใช้งาน ({qty})
-        </span>
+        </button>
       );
-    } else if (qty === 1) {
+    } else if (qty > 0) {
       return (
-        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200">
-          <AlertTriangle className="w-3.5 h-3.5" /> เหลือ 1 ชิ้น
-        </span>
+        <button
+          onClick={() => openThresholdModal(item)}
+          title={`ต่ำกว่าเกณฑ์ความปลอดภัย (${minStock} ชิ้น) คลิกเพื่อปรับตั้งค่า`}
+          className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 transition-all active:scale-95 cursor-pointer shadow-2xs"
+        >
+          <AlertTriangle className="w-3.5 h-3.5" /> เหลือ {qty} ชิ้น
+        </button>
       );
     } else {
       return (
-        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200">
+        <button
+          onClick={() => openThresholdModal(item)}
+          title="ของหมด (คลิกเพื่อปรับตั้งค่า)"
+          className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 transition-all active:scale-95 cursor-pointer shadow-2xs"
+        >
           <XCircle className="w-3.5 h-3.5" /> ของหมด (0)
-        </span>
+        </button>
       );
     }
   };
 
-  const filteredCustomers = customers.filter(cust => {
-    const term = searchTerm.toLowerCase();
-    const matchCustomer = cust.customerName.toLowerCase().includes(term);
-    const matchOpp = cust.oppNumbers.some((opp: string) => opp.toLowerCase().includes(term));
-    const matchItem = cust.items.some((item: any) => 
-      item.item_name.toLowerCase().includes(term) || 
-      item.stock_code.toLowerCase().includes(term) ||
-      (item.remark && item.remark.toLowerCase().includes(term))
-    );
-    return matchCustomer || matchOpp || matchItem;
-  });
+  const processedCustomers = customers
+    .filter(cust => {
+      const term = searchTerm.toLowerCase();
+      const matchCustomer = cust.customerName?.toLowerCase().includes(term);
+      const matchOpp = cust.oppNumbers?.some((opp: string) => opp.toLowerCase().includes(term));
+      const matchItem = cust.items?.some((item: any) => 
+        item.item_name?.toLowerCase().includes(term) || 
+        item.stock_code?.toLowerCase().includes(term) ||
+        (item.remark && item.remark.toLowerCase().includes(term))
+      );
+      return matchCustomer || matchOpp || matchItem;
+    })
+    .sort((a, b) => {
+      if (sortBy === 'name_asc') {
+        return a.customerName.localeCompare(b.customerName, 'th');
+      } else if (sortBy === 'name_desc') {
+        return b.customerName.localeCompare(a.customerName, 'th');
+      } else if (sortBy === 'items_desc') {
+        return (b.items?.length || 0) - (a.items?.length || 0);
+      } else if (sortBy === 'items_asc') {
+        return (a.items?.length || 0) - (b.items?.length || 0);
+      }
+      return 0;
+    });
 
-  // 🔒 ถ้ายังไม่ได้ล็อกอิน ให้โชว์หน้า Login หน้าแรก
   if (!currentUser) {
     return (
       <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4 font-sans">
@@ -299,7 +406,7 @@ export default function StockDashboard() {
               className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-semibold flex items-center justify-center gap-2 shadow-md shadow-blue-200 transition-all active:scale-98 disabled:opacity-50"
             >
               {isLoggingIn && <Loader2 className="w-4 h-4 animate-spin" />}
-              <span>{isLoggingIn ? 'กำลังเข้าสู่ระบบ & ยืนยันรหัส...' : 'เข้าสู่ระบบ'}</span>
+              <span>{isLoggingIn ? 'กำลังเข้าสู่ระบบ...' : 'เข้าสู่ระบบ'}</span>
             </button>
           </form>
         </div>
@@ -307,7 +414,6 @@ export default function StockDashboard() {
     );
   }
 
-  // 🔓 ถ้าล็อกอินแล้ว โชว์หน้า Dashboard
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 font-sans">
       <header className="bg-white border-b border-slate-200 sticky top-0 z-10 shadow-sm">
@@ -360,27 +466,45 @@ export default function StockDashboard() {
             </button>
           </div>
 
-          <div className="relative w-full sm:w-80">
-            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input 
-              type="text"
-              placeholder="ค้นหาชื่อลูกค้า, OPP, อะไหล่..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-slate-400 shadow-sm"
-            />
+          <div className="flex items-center gap-3 w-full sm:w-auto">
+            <div className="relative">
+              <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium text-slate-700 shadow-sm">
+                <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
+                <select
+                  value={sortBy}
+                  onChange={(e: any) => setSortBy(e.target.value)}
+                  className="bg-transparent focus:outline-none cursor-pointer pr-1 text-slate-700"
+                >
+                  <option value="name_asc">ชื่อลูกค้า (ก - ฮ)</option>
+                  <option value="name_desc">ชื่อลูกค้า (ฮ - ก)</option>
+                  <option value="items_desc">จำนวนสินค้า (มาก ➔ น้อย)</option>
+                  <option value="items_asc">จำนวนสินค้า (น้อย ➔ มาก)</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="relative w-full sm:w-72">
+              <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input 
+                type="text"
+                placeholder="ค้นหาชื่อลูกค้า, OPP, อะไหล่..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-slate-400 shadow-sm"
+              />
+            </div>
           </div>
         </div>
 
         <div className="space-y-6">
-          {filteredCustomers.length === 0 ? (
+          {processedCustomers.length === 0 ? (
             <div className="text-center py-16 bg-white rounded-2xl border border-slate-200/80 text-slate-400">
               <Building2 className="w-12 h-12 mx-auto text-slate-300 mb-3" />
               <p className="text-sm font-medium text-slate-600">ไม่พบรายการลูกค้าของคุณ ({currentUser})</p>
               <p className="text-xs text-slate-400 mt-1">กดปุ่ม "เพิ่ม OPP / ลูกค้าใหม่" ด้านบนเพื่อเริ่มติดตามสต็อก</p>
             </div>
           ) : (
-            filteredCustomers.map((cust) => {
+            processedCustomers.map((cust) => {
               const isExpanded = expandedCustomers[cust.customerName] || false;
               const topItems = cust.items.slice(0, 3);
               const extraItems = cust.items.slice(3);
@@ -404,7 +528,7 @@ export default function StockDashboard() {
                         </div>
                         <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                           <span className="text-[11px] text-slate-400">ผูกกับ OPP:</span>
-                          {cust.oppNumbers.map((opp: string) => (
+                          {cust.oppNumbers?.map((opp: string) => (
                             <span key={opp} className="bg-slate-200/80 text-slate-700 font-mono text-[11px] px-2 py-0.5 rounded font-medium">
                               {opp}
                             </span>
@@ -415,7 +539,7 @@ export default function StockDashboard() {
 
                     <div className="flex items-center space-x-1">
                       <button 
-                        onClick={() => handleResyncSingle(cust.customerName)}
+                        onClick={() => handleResyncCustomer(cust.customerName)}
                         disabled={isSingleSyncing}
                         className="p-2 text-slate-400 hover:text-blue-600 rounded-lg hover:bg-white transition-colors"
                         title="ดึงสต็อกสดเฉพาะลูกค้ารายนี้"
@@ -441,7 +565,7 @@ export default function StockDashboard() {
                           <th className="py-3 px-4">เลข OPP</th>
                           <th className="py-3 px-4">STOCK CODE</th>
                           <th className="py-3 px-4">LOCATION</th>
-                          <th className="py-3 px-4 text-center">สถานะคงเหลือ</th>
+                          <th className="py-3 px-4 text-center">สถานะคงเหลือ (คลิกเพื่อปรับเกณฑ์)</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 text-sm">
@@ -457,7 +581,7 @@ export default function StockDashboard() {
                               )}
                             </td>
                             <td className="py-4 px-4 font-mono text-xs font-semibold text-blue-600">
-                              {item.opp_number}
+                              {item.opp_number || 'N/A'}
                             </td>
                             <td className="py-4 px-4 font-mono text-xs text-slate-600">
                               {item.stock_code}
@@ -469,7 +593,7 @@ export default function StockDashboard() {
                               </div>
                             </td>
                             <td className="py-4 px-4 text-center">
-                              {getStatusBadge(item.quantity)}
+                              {getStatusBadge(item)}
                             </td>
                           </tr>
                         ))}
@@ -493,7 +617,7 @@ export default function StockDashboard() {
                                     )}
                                   </td>
                                   <td className="py-4 px-4 font-mono text-xs font-semibold text-blue-600">
-                                    {item.opp_number}
+                                    {item.opp_number || 'N/A'}
                                   </td>
                                   <td className="py-4 px-4 font-mono text-xs text-slate-600">
                                     {item.stock_code}
@@ -505,7 +629,7 @@ export default function StockDashboard() {
                                     </div>
                                   </td>
                                   <td className="py-4 px-4 text-center">
-                                    {getStatusBadge(item.quantity)}
+                                    {getStatusBadge(item)}
                                   </td>
                                 </tr>
                               ))}
@@ -538,7 +662,7 @@ export default function StockDashboard() {
       {/* Modal เพิ่มลูกค้าใหม่ */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-100">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-100 animate-in fade-in zoom-in-95 duration-200">
             <h3 className="text-lg font-bold text-slate-900 mb-1">➕ เพิ่ม OPP / ลูกค้าใหม่</h3>
             <p className="text-xs text-slate-500 mb-5">
               ใส่ชื่อลูกค้า และ เลข OPP เพื่อดึงสต็อกสดมาไว้ในรายการดูแลของคุณ ({currentUser})
@@ -587,6 +711,158 @@ export default function StockDashboard() {
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Threshold Modal */}
+      {thresholdModalOpen && selectedItemForThreshold && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="bg-blue-50 p-2.5 rounded-2xl text-blue-600">
+                <SlidersHorizontal className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">ตั้งค่าเกณฑ์คงเหลือปลอดภัย</h3>
+                <p className="text-xs text-slate-500">สำหรับแจ้งเตือนสถานะสีเขียว</p>
+              </div>
+            </div>
+
+            <div className="bg-slate-50 p-3.5 rounded-2xl mb-5 border border-slate-100">
+              <p className="text-xs font-semibold text-slate-800 line-clamp-2 leading-relaxed">
+                {selectedItemForThreshold.item_name}
+              </p>
+              <div className="flex items-center gap-2 mt-1.5 text-[11px] text-slate-500 font-mono">
+                <span>Code: {selectedItemForThreshold.stock_code}</span>
+                <span>•</span>
+                <span>มีอยู่จริง: {selectedItemForThreshold.quantity} ชิ้น</span>
+              </div>
+            </div>
+
+            <div className="space-y-3 mb-6">
+              <label className="block text-xs font-semibold text-slate-700 text-center">
+                จำนวนขั้นต่ำปลอดภัย (ชิ้น)
+              </label>
+              
+              <div className="flex items-center justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setNewMinStockValue(prev => Math.max(1, prev - 1))}
+                  className="w-10 h-10 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center transition-colors active:scale-95"
+                >
+                  <Minus className="w-4 h-4" />
+                </button>
+
+                <input
+                  type="number"
+                  min="1"
+                  value={newMinStockValue}
+                  onChange={(e) => setNewMinStockValue(Math.max(1, parseInt(e.target.value) || 1))}
+                  className="w-20 text-center text-xl font-bold py-2 bg-slate-50 border border-slate-200 rounded-xl text-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                />
+
+                <button
+                  type="button"
+                  onClick={() => setNewMinStockValue(prev => prev + 1)}
+                  className="w-10 h-10 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center transition-colors active:scale-95"
+                >
+                  <Plus className="w-4 h-4" />
+                </button>
+              </div>
+
+              <p className="text-[11px] text-slate-400 text-center mt-1">
+                หากมีของตั้งเเต่ <span className="font-semibold text-emerald-600">{newMinStockValue} ชิ้นขึ้นไป</span> จะขึ้นสีเขียว "พร้อมใช้งาน"
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setThresholdModalOpen(false)}
+                className="px-4 py-2.5 rounded-xl text-xs font-semibold text-slate-500 hover:bg-slate-100 transition-colors"
+                disabled={isUpdatingThreshold}
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveThreshold}
+                disabled={isUpdatingThreshold}
+                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-all active:scale-95 disabled:opacity-50"
+              >
+                {isUpdatingThreshold && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                <span>บันทึกเกณฑ์</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 🎨 🗑️ Custom Delete Confirmation Modal */}
+      {deleteModalOpen && customerToDelete && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 duration-200 text-center">
+            <div className="w-12 h-12 rounded-2xl bg-rose-50 text-rose-600 mx-auto mb-4 flex items-center justify-center">
+              <Trash2 className="w-6 h-6" />
+            </div>
+
+            <h3 className="text-base font-bold text-slate-900 mb-1">
+              ยืนยันการลบลูกค้า?
+            </h3>
+            <p className="text-xs text-slate-500 leading-relaxed mb-6">
+              คุณต้องการลบลูกค้า <span className="font-bold text-slate-800">"{customerToDelete}"</span> ออกจากรายการดูแลของคุณหรือไม่?
+            </p>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setDeleteModalOpen(false);
+                  setCustomerToDelete(null);
+                }}
+                disabled={isDeleting}
+                className="w-1/2 py-2.5 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 transition-colors"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteCustomer}
+                disabled={isDeleting}
+                className="w-1/2 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all active:scale-95 shadow-sm disabled:opacity-50"
+              >
+                {isDeleting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                <span>{isDeleting ? 'กำลังลบ...' : 'ยืนยันลบ'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Custom Alert Modal */}
+      {resultModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 duration-200 text-center">
+            <div className={`w-12 h-12 rounded-2xl mx-auto mb-4 flex items-center justify-center ${
+              resultModalData.isSuccess ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'
+            }`}>
+              {resultModalData.isSuccess ? <Check className="w-6 h-6" /> : <AlertTriangle className="w-6 h-6" />}
+            </div>
+
+            <h3 className="text-base font-bold text-slate-900 mb-1">
+              {resultModalData.title}
+            </h3>
+            <p className="text-xs text-slate-500 leading-relaxed mb-6">
+              {resultModalData.message}
+            </p>
+
+            <button
+              onClick={() => setResultModalOpen(false)}
+              className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold transition-all active:scale-95 shadow-sm"
+            >
+              ตกลง
+            </button>
           </div>
         </div>
       )}
